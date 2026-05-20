@@ -2,17 +2,17 @@
 # =============================================================================
 # 01_compute_quantiles.R
 # Computes 4-class quantile breaks for every TIFF in a folder and writes
-# a CSV that the companion script (02_reclassify.R) will consume.
+# a CSV that the script Reclassification.R will use.
 # =============================================================================
 
 library(terra)
 
 # ── USER SETTINGS ─────────────────────────────────────────────────────────────
-input_dir  <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile"   # <-- change this
-output_csv <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile/Test.csv"         # written to working directory
+input_dir  <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile"   
+output_csv <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile/Test.csv"         
 n_classes        <- 4                       # number of quantile classes
 sample_threshold <- 5e6                     # rasters larger than this are sampled
-sample_size      <- 500000                  # number of cells to sample
+sample_size      <- 500000                  # number of cells to sample and calculatre the quantile on that
 # ──────────────────────────────────────────────────────────────────────────────
 
 tiff_files <- list.files(input_dir,
@@ -20,24 +20,24 @@ tiff_files <- list.files(input_dir,
                          full.names = TRUE,
                          ignore.case = TRUE)
 
-if (length(tiff_files) == 0) stop("No TIFF files found in: ", input_dir)
+if (length(tiff_files) == 0) stop("No TIFF files found in: ", input_dir) #length give the number of elements
 
-# ── Skip layers already in the CSV (incremental update) ───────────────────────
-existing_layers <- character(0)
-existing_df     <- NULL
+# ── Skip layers already in the CSV ───────────────────────
+existing_layers <- character(0) #empty text vector ???
+existing_df     <- NULL #object must not exist
 
 if (file.exists(output_csv)) {
-  existing_df     <- read.csv(output_csv, stringsAsFactors = FALSE)
-  existing_layers <- existing_df$layer
+  existing_df     <- read.csv(output_csv, stringsAsFactors = FALSE) #does the layer already exist in the output? - so reads the output CSV, 
+  existing_layers <- existing_df$layer #extract the LAYER COLUMN
   message("Existing CSV found with ", nrow(existing_df), " layer(s) already processed.")
 } else {
   message("No existing CSV found — processing all layers.")
 }
 
 # Filter to only TIFFs not yet in the CSV
-all_layer_names <- tools::file_path_sans_ext(basename(tiff_files))
-new_idx         <- !all_layer_names %in% existing_layers
-tiff_files      <- tiff_files[new_idx]
+all_layer_names <- tools::file_path_sans_ext(basename(tiff_files)) #GETS THE NAME OF THE RASTER CLEANING IT
+new_idx         <- !all_layer_names %in% existing_layers #Check membership returning true or false for each layer (the ! negate the result), TRUE=NEW RASTER
+tiff_files      <- tiff_files[new_idx] #This keeps ONLY new rasters.
 
 if (length(tiff_files) == 0) {
   message("✓ All layers already processed. Nothing to do.")
@@ -48,27 +48,28 @@ message("Found ", length(tiff_files), " new TIFF file(s) to process.\n")
 
 # Probability cut-points that define n_classes equal-frequency classes.
 # For 4 classes: 0%, 25%, 50%, 75%, 100%  →  breaks at 25 / 50 / 75 percentiles
-probs <- seq(0, 1, length.out = n_classes + 1)
+probs <- seq(0, 1, length.out = n_classes + 1) #Creates quantile probabilities.
 
 results <- lapply(tiff_files, function(fp) {
   
   layer_name <- tools::file_path_sans_ext(basename(fp))
   message("  Processing: ", layer_name)
   
-  r       <- terra::rast(fp)
-  n_cells <- terra::ncell(r)
+  r       <- terra::rast(fp) #Loads raster.
+  n_cells <- terra::ncell(r) #Counts total raster pixels.
   
   # For large rasters, sample instead of loading all values into RAM.
   # 500k cells is more than enough for stable quantile estimates.
   if (n_cells > sample_threshold) {
     message("    (large raster: ", format(n_cells, big.mark = ","),
             " cells — sampling ", format(sample_size, big.mark = ","), " cells)")
-    vals_raw <- terra::spatSample(r, size = sample_size,
-                                  method = "regular",
-                                  as.df = FALSE)[, 1]
+    vals_raw <- terra::spatSample(r, size = sample_size,#extract a sample
+                                  method = "regular", #Pixels are sampled evenly across raster space -- difference between reg and random?
+                                  as.df = FALSE)[, 1] #Returns vector/matrix instead of dataframe.
+    
     # Remove both R NAs and any value declared as the raster's NoData flag
     naflag   <- terra::NAflag(r)
-    if (!is.na(naflag)) vals_raw <- vals_raw[vals_raw != naflag]
+    if (!is.na(naflag)) vals_raw <- vals_raw[vals_raw != naflag] #Even sampled values may include NoData so it cleans it (Does this REDUCE THE SAMPLING???)
     values   <- vals_raw[!is.na(vals_raw)]
   } else {
     values <- terra::values(r, mat = FALSE)
