@@ -1,8 +1,10 @@
 
 # =============================================================================
 # 01_compute_quantiles.R
-# Computes 4-class quantile breaks for every TIFF in a folder and writes
-# a CSV that the script Reclassification.R will use.
+# Computes 4-class quantile breaks for every TIFF in a folder
+# For layers with only one value e.g.mangroves.tif it assign directly 4 (VH)
+# Writes a CSV that the script Reclassification.R will use.
+# It won't run tiffs already processed
 # =============================================================================
 
 library(terra)
@@ -12,8 +14,9 @@ input_dir  <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile"
 output_csv <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile/Test.csv"         
 n_classes        <- 4                       # number of quantile classes
 sample_threshold <- 5e6                     # rasters larger than this are sampled
-sample_size      <- 500000                  # number of cells to sample and calculatre the quantile on that
+sample_size      <- 500000                  # number of cells to sample and calculate the quantile
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 tiff_files <- list.files(input_dir,
                          pattern  = "\\.tif{1,2}$",
@@ -48,7 +51,8 @@ message("Found ", length(tiff_files), " new TIFF file(s) to process.\n")
 
 # Probability cut-points that define n_classes equal-frequency classes.
 # For 4 classes: 0%, 25%, 50%, 75%, 100%  →  breaks at 25 / 50 / 75 percentiles
-probs <- seq(0, 1, length.out = n_classes + 1) #Creates quantile probabilities.
+
+#probs <- seq(0, 1, length.out = n_classes + 1) #Creates quantile probabilities.
 
 results <- lapply(tiff_files, function(fp) {
   
@@ -56,15 +60,25 @@ results <- lapply(tiff_files, function(fp) {
   message("  Processing: ", layer_name)
   
   r       <- terra::rast(fp) #Loads raster.
-  n_cells <- terra::ncell(r) #Counts total raster pixels.
+  
+  
+  # NA REMOVE****
+  #***
+  #*****
+  #REMOVE THE NA FILTER AFTER THE SAMPLING
+  
+  
   
   # For large rasters, sample instead of loading all values into RAM.
   # 500k cells is more than enough for stable quantile estimates.
+  
+  n_cells <- terra::ncell(r) #Counts total raster pixels.
+  set.seed(1)
   if (n_cells > sample_threshold) {
     message("    (large raster: ", format(n_cells, big.mark = ","),
             " cells — sampling ", format(sample_size, big.mark = ","), " cells)")
     vals_raw <- terra::spatSample(r, size = sample_size,#extract a sample
-                                  method = "regular", #Pixels are sampled evenly across raster space -- difference between reg and random?
+                                  method = "regular", #Pixels are sampled evenly across raster space -- 
                                   as.df = FALSE)[, 1] #Returns vector/matrix instead of dataframe.
     
     # Remove both R NAs and any value declared as the raster's NoData flag
@@ -105,16 +119,17 @@ results <- lapply(tiff_files, function(fp) {
   }
   
   # ── Normal case: compute quantile breaks ───────────────────────────────────
+  probs=c(0.25,0.50,0.75)
   breaks <- as.numeric(quantile(values, probs = probs, na.rm = TRUE))
   
   # Guarantee strictly increasing breaks so reclassification is unambiguous:
   # if duplicate break values exist (e.g. highly skewed data), nudge them apart
   # so each class interval is non-empty.
-  for (i in seq(2, length(breaks))) {
-    if (breaks[i] <= breaks[i - 1]) {
-      breaks[i] <- breaks[i - 1] + .Machine$double.eps * abs(breaks[i - 1]) * 1e6
-    }
-  }
+#  for (i in seq(2, length(breaks))) {
+#    if (breaks[i] <= breaks[i - 1]) {
+#      breaks[i] <- breaks[i - 1] + .Machine$double.eps * abs(breaks[i - 1]) * 1e6
+ #   }
+ # }
   
   data.frame(
     layer      = layer_name,
@@ -126,7 +141,7 @@ results <- lapply(tiff_files, function(fp) {
 })
 
 # Drop any NULLs (skipped layers)
-results <- Filter(Negate(is.null), results)
+#results <- Filter(Negate(is.null), results)
 
 if (length(results) == 0) stop("No new layers could be processed.")
 
