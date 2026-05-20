@@ -1,14 +1,13 @@
 # =============================================================================
-# 03_standardize_reclassify.R
-#
-# Pipeline per layer (loops over every TIFF listed in the quantile CSV):
+# 
+# Pipeline per layer (loops over every TIFF listed in the quantile CSV - EXCEPT the ones already processed):
 #   0. Libraries & settings
 #   1. AOI definition  (GAUL0 | GAUL1 | EXTENT | SHAPEFILE)
 #   2. Reference layer (sets target resolution)
-#   3. For each layer in CSV:
+#   3. For each NEW layer in CSV:
 #       3a. Load raw TIFF
 #       3b. Reproject to TARGET_CRS
-#       3c. NoData cleaning  (metadata flag, fill values, ASIS/PyAEZ filter)
+#       3c. NoData cleaning  (metadata flag, fill values, ASIS/PyAEZ filter) - this takes 5 mins for 3billion pixels
 #       3d. Crop + mask to AOI
 #       3e. Reclassify into 4 bins using CSV quantile breaks
 #       3f. Resample to reference resolution  (method = "near")
@@ -40,7 +39,7 @@ country_name <- "Uganda"
 country_ext  <- ext(-61.1, -60.85, 13.69, 14.12)   # used only if aoi_mode = "EXTENT"
 shp_path     <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Boundaries/CostaRica.shp"  # SHAPEFILE mode
 
-# ── Classification labels & colours (shared across all layers) ────────────────
+# ── Classification labels & colours (shared across all layers) ──────────────── To be added ASIS classification? 
 bin_labels  <- c("1" = "Low", "2" = "Moderate", "3" = "High", "4" = "Very high")
 
 bin_colours <- c("Low"       = "#d9ef8b",
@@ -128,11 +127,12 @@ message("✓ Reference layer ready\n")
 # 3. READ QUANTILE BREAKS CSV
 # =============================================================================
 
-breaks_df  <- read.csv(BREAKS_CSV, stringsAsFactors = FALSE)
-break_cols <- sort(grep("^break_\\d+$", names(breaks_df), value = TRUE))
-n_classes  <- length(break_cols) - 1
+breaks_df  <- read.csv(BREAKS_CSV, stringsAsFactors = FALSE) #This creates the dataframe in R (table in R with rows and columns) STRING FACTOR FALSE  says "Keep text as normal text."
+break_cols <- sort(grep("^break_\\d+$", names(breaks_df), value = TRUE)) #ThiS automatically detects columns named BREAK_NUMBER - 
+#grep finds matching text - ^ start of text , \\d+ means one or more digits, $end of text, TRUE give back not the positions but NAMES -SO IF I UPDATE TO 6 CLASSESS IT AUTOAMTICALLY DETECTS
+n_classes  <- length(break_cols) - 1 #I NEED 5 breaks to create 4 classes (Classes define spaces between edges)
 
-message("Loaded ", nrow(breaks_df), " layer(s) from CSV: ", BREAKS_CSV)
+message("Loaded ", nrow(breaks_df), " layer(s) from CSV: ", BREAKS_CSV) #nrow reads the n of rows (each row = one raster layer)
 message("Detected ", n_classes, " classes\n")
 
 
@@ -141,20 +141,20 @@ message("Detected ", n_classes, " classes\n")
 # =============================================================================
 
 for (i in seq_len(nrow(breaks_df))) {
-  
-  row        <- breaks_df[i, ]
+ #The above means "repeat the following code once for every row in the dataframe" 
+  row        <- breaks_df[i, ] #This extracts ONE row from the dataframe (i iteration) \ follows the extraction of variables 
   layer_name <- row$layer
   fp         <- row$file_path
   note       <- row$note
-  breaks     <- as.numeric(row[, break_cols])
+  breaks     <- as.numeric(row[, break_cols]) #You select ONLY the break columns from the row.as numeric takes the values not text e.g "10"
   
   message(rep("=", 70))
   message("  Layer ", i, "/", nrow(breaks_df), ": ", layer_name)
   message(rep("=", 70))
   
-  if (!file.exists(fp)) {
+  if (!file.exists(fp)) { #! menas NOT
     warning("  [SKIP] File not found: ", fp)
-    next
+    next #skip this iteration and move to next layer
   }
   
   # Skip if output TIFF already exists (avoids reprocessing completed layers)
