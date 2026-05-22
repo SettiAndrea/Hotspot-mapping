@@ -1,19 +1,18 @@
 # =============================================================================
-# 01_compute_quantiles_prefilter.R
+# ALTERNATIVE VERSION — NA-safe quantile estimation with controlled sampling
 #
-# ALTERNATIVE VERSION — pre-filter NAs before sampling
+# This script computes Q25, Q50, and Q75 thresholds for raster layers
+# after removing NoData and NA values.
 #
-# Strategy: load ALL values into memory first, remove NoData and NAs,
-# then sample from the clean values only.
-# This guarantees the sample is drawn exclusively from valid pixels,
-# which matters for sparse layers (mangroves, biodiversity hotspots)
-# where valid pixels cover only a small fraction of the raster extent.
+# For each raster, valid pixel values are first estimated and extracted
+# (either fully or via sampling depending on raster size).
 #
-# Trade-off: uses more RAM than the original script because the full
-# raster is always loaded into memory, even for large rasters.
+# If the number of valid pixels is below a defined threshold, all valid
+# values are loaded. If the raster is large, a fixed number of valid pixels
+# are sampled using systematic (regular) sampling.
 #
-# Use this script alongside 01_compute_quantiles.R and compare the
-# Q25/Q50/Q75 values in the two CSVs to see if sparse layers differ.
+# Quantiles are then computed from the resulting set of valid pixel values.
+#
 # =============================================================================
 
 library(terra)
@@ -42,70 +41,90 @@ results <- lapply(tiff_files, function(fp) {
   message("  Processing: ", layer_name)
   
   r      <- terra::rast(fp)
-  naflag <- terra::NAflag(r)
+  #naflag <- terra::NAflag(r) #retrieves the internal value used by the raster to represent missing data
   
   # ── Load ALL values and clean BEFORE deciding whether to sample ────────────
   # This is the key difference from the original script:
   # we always load everything first so NA pixels are excluded
   # from the pool before any sampling takes place.
-  message("    Loading all values for pre-filtering...")
-  all_values <- terra::values(r, mat = FALSE)
   
-  # Remove GIS-level NoData sentinel (e.g. -9999)
-  if (!is.na(naflag)) all_values <- all_values[all_values != naflag]
+  n_total <- terra::ncell(r)
+  # Estimate number of non-NA cells without loading everything
   
-  # Remove R-level NAs
-  all_values <- all_values[!is.na(all_values)]
+  n_clean <- terra::global(!is.na(r), "sum", na.rm=TRUE)[1,1] 
+  #creates a TRUE/FALSE raster: #TRUE where pixels are NA  #FALSE where pixels contain data
+  #[1,1] extracts the actual numeric value from the returned table.
+  
+  message("    Estimated clean pixels: ",
+          format(n_clean, big.mark=","))
+  
+  set.seed(1)
+  
+  if (n_clean > sample_threshold) {
+    
+    message("    Sampling valid pixels directly...")
+    
+    values <- terra::spatSample(
+      r,
+      size     = sample_size,
+      method   = "regular",
+      na.rm    = TRUE,
+      values   = TRUE,
+      as.points = FALSE
+    )[,1]
+    
+  } else {
+    
+    message("    Small raster: loading valid pixels only")
+    
+    values <- terra::values(r, na.rm = TRUE)
+  }
   
   # ── Cap filter: layers whose name contains ASIS or PEy ──────────────
   cap_filter <- grepl("ASIS|PEy", layer_name, ignore.case = FALSE)
+  
   if (cap_filter) {
-    all_values <- all_values[all_values <= 100]
+    values <- values[values <= 100] #Anything above 100 is removed.
+    
     message("    [cap filter] '", layer_name,
             "' — keeping only values <= 100")
   }
   
-  n_clean <- length(all_values)
-  message("    Clean (non-NA) pixels: ", format(n_clean, big.mark = ","),
-          " out of ", format(terra::ncell(r), big.mark = ","), " total")
+  n_clean <- length(values) #counts how many usable values remain after:
   
-  if (n_clean == 0) {
-    warning("  [SKIP] ", layer_name, " — no non-NA values found.")
-    return(NULL)
+  #removing NA values
+  #sampling or loading
+  #applying the optional cap filter
+  
+  message("    Final usable values: ",
+          format(n_clean, big.mark=","))
+  
+  if (n_clean == 0) { #checks whether no usable values remain.
+    warning("  [SKIP] ", layer_name,
+            " — no valid values found.")
+    return(NULL) #skips that raster and moves to the next one.
   }
   
-  # ── Now sample from CLEAN values only (if the layer is large) ──────────────
-  set.seed(1)
-  if (n_clean > sample_threshold) {
-    message("    (large clean pool: sampling ", format(sample_size, big.mark = ","),
-            " values from ", format(n_clean, big.mark = ","), " clean pixels)")
-    values <- all_values[sample(n_clean, size = sample_size, replace = FALSE)]
-  } else {
-    # Small enough — use all clean values directly, no sampling needed
-    message("    (small clean pool: using all ", format(n_clean, big.mark = ","),
-            " clean values)")
-    values <- all_values
-  }
-  
-  unique_vals <- unique(values)
+  # Get unique non-NA values
+  unique_vals <- unique(as.vector(values)) #extracts all distinct values from the raster.
   
   # ── Edge case: only one unique value → assign highest class ──────────────
-  if (length(unique_vals) == 1) {
+  if (length(unique_vals) == 1) { #checks whether the raster contains only one unique value
     message("  [NOTE] ", layer_name,
             " has a single unique value (", unique_vals,
             "). Assigning highest class (", n_classes, ").")
     
     return(data.frame(
-      layer        = layer_name,
-      file_path    = fp,
-      n_classes    = n_classes,
+      layer          = layer_name,
+      file_path      = fp,
+      n_classes      = n_classes,
       n_clean_pixels = n_clean,
-      note         = "single_value",
-      Q25          = unique_vals,
-      Q50          = unique_vals,
-      Q75          = unique_vals
+      note           = "single_value",
+      Q25            = unique_vals,
+      Q50            = unique_vals,
+      Q75            = unique_vals
     ))
-  }
+  } 
   
   # ── Normal case: compute the three quantile thresholds ───────────────────
   # Classes after reclassification:
@@ -113,13 +132,13 @@ results <- lapply(tiff_files, function(fp) {
   #   Class 2 (Med-Low)  : Q25 <= value <  Q50
   #   Class 3 (Med-High) : Q50 <= value <  Q75
   #   Class 4 (High)     : value >= Q75
-  breaks <- as.numeric(quantile(values, probs = c(0.25, 0.50, 0.75), na.rm = TRUE))
+  breaks <- as.numeric(quantile(values, probs = c(0.25, 0.50, 0.75), na.rm = TRUE)) #further removes NA values if any somehow remain.
   
   data.frame(
     layer          = layer_name,
     file_path      = fp,
     n_classes      = n_classes,
-#   n_clean_pixels = n_clean,       # extra column — useful for comparison
+    n_clean_pixels = n_clean,
     note           = ifelse(cap_filter, "capped_at_100", "ok"),
     Q25            = breaks[1],
     Q50            = breaks[2],
