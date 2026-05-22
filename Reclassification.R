@@ -7,12 +7,28 @@
 #   3. For each NEW layer in CSV:
 #       3a. Load raw TIFF
 #       3b. Reproject to TARGET_CRS
-#       3c. NoData cleaning  (metadata flag, fill values, ASIS/PyAEZ filter) - this takes 5 mins for 3billion pixels
+#       3c. NoData cleaning  (metadata flag, fill values, ASIS/PyAEZ filter) - this takes 5 mins for 3billion pixels'layer
 #       3d. Crop + mask to AOI
-#       3e. Reclassify into 4 bins using CSV quantile breaks
+#       3e. Reclassify into 4 bins using CSV quantile breaks (or single value)
 #       3f. Resample to reference resolution  (method = "near")
 #       3g. Export .tif + .png
 # =============================================================================
+
+#Adjustments in QUANTILE_CSV.R script to feed the RECLASSIFICATION.R 
+#Different classifications: 
+
+# - Land changes (layers with already 4 values) 
+
+# - Single value layers (DONE) 
+
+# - Vulnerability layers applying a cathegorization given by the resource of the data 
+
+# - ASIS (many classes, J shoudl we follow a standard here?) 
+
+# - Invert the legend for adaptive capacity layers 
+
+# - Option to calculate the quantile at national level. 
+# The user will be able to select a Classification based on NATIONAL or GLOBAL value distribution. 
 
 
 # ── 0. LIBRARIES & SETTINGS ───────────────────────────────────────────────────
@@ -127,13 +143,15 @@ message("✓ Reference layer ready\n")
 # 3. READ QUANTILE BREAKS CSV
 # =============================================================================
 
-breaks_df  <- read.csv(BREAKS_CSV, stringsAsFactors = FALSE) #This creates the dataframe in R (table in R with rows and columns) STRING FACTOR FALSE  says "Keep text as normal text."
-break_cols <- sort(grep("^break_\\d+$", names(breaks_df), value = TRUE)) #ThiS automatically detects columns named BREAK_NUMBER - 
-#grep finds matching text - ^ start of text , \\d+ means one or more digits, $end of text, TRUE give back not the positions but NAMES -SO IF I UPDATE TO 6 CLASSESS IT AUTOAMTICALLY DETECTS
-n_classes  <- length(break_cols) - 1 #I NEED 5 breaks to create 4 classes (Classes define spaces between edges)
+breaks_df  <- read.csv(BREAKS_CSV,
+                       stringsAsFactors = FALSE)
+break_cols <- c("Q25", "Q50", "Q75")
+n_classes  <- 4   # always 4: =Q75
 
-message("Loaded ", nrow(breaks_df), " layer(s) from CSV: ", BREAKS_CSV) #nrow reads the n of rows (each row = one raster layer)
-message("Detected ", n_classes, " classes\n")
+message("Loaded ", nrow(breaks_df),
+        " layer(s) from CSV: ", BREAKS_CSV)
+message("Using fixed 4-class quantile scheme (Q25/Q50/Q75)\n")
+
 
 
 # =============================================================================
@@ -146,7 +164,9 @@ for (i in seq_len(nrow(breaks_df))) {
   layer_name <- row$layer
   fp         <- row$file_path
   note       <- row$note
-  breaks     <- as.numeric(row[, break_cols]) #You select ONLY the break columns from the row.as numeric takes the values not text e.g "10"
+  breaks     <- as.numeric(c(row$Q25, row$Q50, row$Q75))
+  n_clean    <- if ("n_clean_pixels" %in% names(row))
+    row$n_clean_pixels else NA
   
   message(rep("=", 70))
   message("  Layer ", i, "/", nrow(breaks_df), ": ", layer_name)
@@ -193,9 +213,9 @@ for (i in seq_len(nrow(breaks_df))) {
   r[r < -1e20] <- NA
   
   # ASIS / PyAEZ filter (values > 100 are invalid)
-  if (str_detect(tolower(layer_name), "asis|pyaez|pey")) {
+  if (str_detect(tolower(layer_name), "asis\PEy")) {
     r[r > 100] <- NA
-    message("  ✓ ASIS/PyAEZ filter applied (> 100 → NA)")
+    message("  ✓ ASIS filter applied (> 100 → NA)")
   }
   
   message("  ✓ NoData cleaning complete")
@@ -223,25 +243,30 @@ for (i in seq_len(nrow(breaks_df))) {
   
   # ── 3e. Reclassify using CSV quantile breaks ───────────────────────────────
   if (note == "single_value") {
-    
-    single_val   <- breaks[length(breaks)]
-    r_classified <- ifel(r == single_val, n_classes, NA)
-    message("  ✓ Single-value layer → all pixels assigned class ", n_classes)
-    
+    single_val   <- breaks[1]   # all Q25/Q50/Q75 equal
+    r_classified <- ifel(!is.na(r),
+                         n_classes, NA)
+    message("  ✓ Single-value layer → class ",
+            n_classes)
   } else {
-    
-    # Build [from, to, class] matrix
-    # First interval extended left so the global minimum is captured
-    rcl <- matrix(NA_real_, nrow = n_classes, ncol = 3)
-    for (cls in seq_len(n_classes)) {
-      lo <- breaks[cls]
-      hi <- breaks[cls + 1]
-      if (cls == 1) lo <- lo - abs(lo) * 1e-9 - .Machine$double.eps
-      rcl[cls, ] <- c(lo, hi, cls)
-    }
-    
-    r_classified <- classify(r, rcl, include.lowest = TRUE, others = NA)
-    message("  ✓ Reclassified into ", n_classes, " bins")
+    # 3 thresholds → 4 classes:
+    #  1: value <  Q25
+    #  2: Q25 <= value <  Q50
+    #  3: Q50 <= value <  Q75
+    #  4: value >= Q75
+    q25 <- breaks[1]
+    q50 <- breaks[2]
+    q75 <- breaks[3]
+    r_classified <- classify(r,
+                             matrix(c(-Inf, q25, 1,
+                                      q25, q50, 2,
+                                      q50, q75, 3,
+                                      q75,  Inf, 4),
+                                    ncol = 3, byrow = TRUE),
+                             include.lowest = TRUE, others = NA)
+    message("  ✓ Reclassified into 4 bins",
+            ifelse(note == "capped_at_100",
+                   " [capped at 100]", ""))
   }
   
   # Frequency table
