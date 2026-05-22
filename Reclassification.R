@@ -40,7 +40,7 @@ library(tidyverse)
 # ── Paths ─────────────────────────────────────────────────────────────────────
 GAUL0_PATH  <- "/Volumes/Andrea_GIS/g2015_2014_0/g2015_2014_0/g2015_2014_0.shp"
 REF_PATH    <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Test_Buodaries_Standardization/Mangroves.tif"
-BREAKS_CSV  <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile/Test.csv"           
+BREAKS_CSV  <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile/Test_prefilter.csv"           
 
 OUT_BASE    <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/OUTPUT"
 OUT_RASTER  <- file.path(OUT_BASE, "RASTER")
@@ -177,13 +177,6 @@ for (i in seq_len(nrow(breaks_df))) {
     next #skip this iteration and move to next layer
   }
   
-  # Skip if output TIFF already exists (avoids reprocessing completed layers)
-  out_tif_check <- file.path(OUT_RASTER, paste0(layer_name, ".tif"))
-  if (file.exists(out_tif_check)) {
-    message("  [SKIP] Output already exists → ", out_tif_check)
-    next
-  }
-  
   # ── 3a. Load ───────────────────────────────────────────────────────────────
   r <- rast(fp)
   message(sprintf("  Native CRS : %s", crs(r, describe = TRUE)$code))
@@ -213,7 +206,7 @@ for (i in seq_len(nrow(breaks_df))) {
   r[r < -1e20] <- NA
   
   # ASIS / PyAEZ filter (values > 100 are invalid)
-  if (str_detect(tolower(layer_name), "asis\PEy")) {
+  if (str_detect(tolower(layer_name), "pey|asy")) {
     r[r > 100] <- NA
     message("  ✓ ASIS filter applied (> 100 → NA)")
   }
