@@ -23,9 +23,9 @@
 
 # - Vulnerability layers applying a cathegorization given by the resource of the data 
 
-# - ASIS (many classes, J shoudl we follow a standard here?) 
+# - ASIS
 
-# - Invert the legend for adaptive capacity layers 
+# - Invert the legend for adaptive capacity layers
 
 # - Option to calculate the quantile at national level. 
 # The user will be able to select a Classification based on NATIONAL or GLOBAL value distribution. 

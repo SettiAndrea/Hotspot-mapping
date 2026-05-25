@@ -43,42 +43,51 @@ results <- lapply(tiff_files, function(fp) {
   r      <- terra::rast(fp)
   #naflag <- terra::NAflag(r) #retrieves the internal value used by the raster to represent missing data
   
-  # ── Load ALL values and clean BEFORE deciding whether to sample ────────────
+  # ── Load ALL values and clean BEFORE deciding whether to SAMPLE ────────────
   # This is the key difference from the original script:
   # we always load everything first so NA pixels are excluded
   # from the pool before any sampling takes place.
+
+   n_total <- terra::ncell(r)
+  # # Estimate number of non-NA cells without loading everything
+  #
+   n_clean <- terra::global(!is.na(r), "sum", na.rm=TRUE)[1,1]
+  # #creates a TRUE/FALSE raster: #TRUE where pixels are NA  #FALSE where pixels contain data
+  # #[1,1] extracts the actual numeric value from the returned table.
+  #
+  #   message("    Estimated clean pixels: ",
+  #           format(n_clean, big.mark=","))
+  # #
+  #  set.seed(1)
+  # #
+  #  if (n_clean > sample_threshold) {
+  # #
+  #    message("    Sampling valid pixels directly...")
+  # #
+  #    values <- terra::spatSample(
+  #      r,
+  #      size     = sample_size,
+  #      method   = "regular",
+  #      na.rm    = TRUE,
+  #      values   = TRUE,
+  #      as.points = FALSE
+  #    )[,1]
+  # #
+  #  } else {
+  # #
+  #    message("    Small raster: loading valid pixels only")
+  # #
+  #    values <- terra::values(r, na.rm = TRUE)
+  #  }
   
-  n_total <- terra::ncell(r)
-  # Estimate number of non-NA cells without loading everything
+  #-----------------
   
-  n_clean <- terra::global(!is.na(r), "sum", na.rm=TRUE)[1,1] 
-  #creates a TRUE/FALSE raster: #TRUE where pixels are NA  #FALSE where pixels contain data
-  #[1,1] extracts the actual numeric value from the returned table.
+  # NO SAMPLING — load all valid pixels
+   values <- terra::values(r, mat = FALSE,
+                           na.rm = TRUE)
+   message("    Loaded all valid values.")
   
-  message("    Estimated clean pixels: ",
-          format(n_clean, big.mark=","))
-  
-  set.seed(1)
-  
-  if (n_clean > sample_threshold) {
-    
-    message("    Sampling valid pixels directly...")
-    
-    values <- terra::spatSample(
-      r,
-      size     = sample_size,
-      method   = "regular",
-      na.rm    = TRUE,
-      values   = TRUE,
-      as.points = FALSE
-    )[,1]
-    
-  } else {
-    
-    message("    Small raster: loading valid pixels only")
-    
-    values <- terra::values(r, na.rm = TRUE)
-  }
+  #_---------------
   
   # ── Cap filter: layers whose name contains ASIS or PEy ──────────────
   cap_filter <- grepl("ASIS|PEy", layer_name, ignore.case = FALSE)
