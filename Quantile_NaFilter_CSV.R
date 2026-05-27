@@ -81,7 +81,7 @@ results <- lapply(tiff_files, function(fp) {
   #-----------------
   
   # NO SAMPLING — load all valid pixels
-   # values <- terra::values(r, mat = FALSE,
+   # values <- terra::values(r, mat = FALSE, 
    #                         na.rm = TRUE)
    # message("    Loaded all valid values.")
   
@@ -115,7 +115,8 @@ results <- lapply(tiff_files, function(fp) {
   # Get unique non-NA values
   unique_vals <- unique(as.vector(values)) #extracts all distinct values from the raster.
   
-  # ── Edge case: only one unique value → assign highest class ──────────────
+  # ── Edge cases
+  # ONLY ONE unique value → assign highest class ──────────────
   if (length(unique_vals) == 1) { #checks whether the raster contains only one unique value
     message("  [NOTE] ", layer_name,
             " has a single unique value (", unique_vals,
@@ -132,6 +133,37 @@ results <- lapply(tiff_files, function(fp) {
       Q75            = unique_vals
     ))
   } 
+  
+  # ── LAND CHANGE layers already classified (1–4) ─────────────────────────
+  # These layers already contain:
+  # 1 = Low
+  # 2 = Moderate
+  # 3 = High
+  # 4 = Very high
+  # → skip quantile calculation
+  
+  landchange_filter <- grepl(
+    "cropland_change|pastureland_change|forestland_change",
+    layer_name,
+    ignore.case = TRUE #uppercase/lowercase differences do not matter.
+  )
+  
+  if (landchange_filter) {
+    
+    message("  [NOTE] ", layer_name,
+            " already classified into 4 categories → skipping quantiles.")
+    
+    return(data.frame(
+      layer          = layer_name,
+      file_path      = fp,
+      n_classes      = n_classes,
+      n_clean_pixels = n_clean,
+      note           = "already_classified",
+      Q25            = 1,
+      Q50            = 2,
+      Q75            = 3
+    ))
+  }
   
   # ── Normal case: compute the three quantile thresholds ───────────────────
   # Classes after reclassification:
