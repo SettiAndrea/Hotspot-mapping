@@ -1,26 +1,26 @@
 # =============================================================================
 # ALTERNATIVE VERSION — NA-safe quantile estimation with controlled sampling
-#
+
+#The script includes filter for already classified tifs
+
 # The script computes Q25, Q50, and Q75 thresholds for raster layers
 # after removing NoData and NA values.
-#
+
 # For each raster, valid pixel values are first estimated and extracted
 # (either fully or via sampling depending on raster size).
-#
+
 # If the number of valid pixels is below a defined threshold, all valid
 # values are loaded. If the raster is large, a fixed number of valid pixels
 # are sampled using systematic (regular) sampling.
-#
+
 # Quantiles are then computed from the resulting set of valid pixel values.
 
 
 #EDITS
 
-#include filter for already classified (check)**********
-
 #load specific layers - match name - include the specific reclassification****
 
-#plots
+
 
 
 # =============================================================================
@@ -54,7 +54,16 @@ results <- lapply(tiff_files, function(fp) {
   out_file <- file.path(OUT_RASTER, paste0(layer_name, ".tif"))
   if (file.exists(out_file)) {
     message("  [SKIP] Already processed: ", layer_name)
-    return(NULL)
+    return(data.frame(
+      layer          = layer_name,
+      file_path      = fp,
+      n_classes      = n_classes,
+      n_clean_pixels = NA,
+      note           = "already_reclassified",
+      Q25            = NA,
+      Q50            = NA,
+      Q75            = NA
+    ))
   }
   # ────────────────────────────────────────────────────────────────────────────
   
