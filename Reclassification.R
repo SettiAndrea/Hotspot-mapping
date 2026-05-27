@@ -19,16 +19,9 @@
 
 # - Land changes (layers with already 4 values) 
 
-# - Single value layers (DONE) 
+# - Vulnerability layers applying a categorization given by the resource of the data 
 
-# - Vulnerability layers applying a cathegorization given by the resource of the data 
-
-# - ASIS
-
-# - Invert the legend for adaptive capacity layers
-
-# - Option to calculate the quantile at national level. 
-# The user will be able to select a Classification based on NATIONAL or GLOBAL value distribution. 
+# - Option to calculate the quantile at national level - Only if needed in the future
 
 
 # ── 0. LIBRARIES & SETTINGS ───────────────────────────────────────────────────
@@ -145,13 +138,12 @@ message("✓ Reference layer ready\n")
 
 breaks_df  <- read.csv(BREAKS_CSV,
                        stringsAsFactors = FALSE)
-break_cols <- c("Q25", "Q50", "Q75")
+break_cols <- c("Q25", "Q50", "Q75") #every raster will be reclassified into four categories using the three quantile thresholds.
 n_classes  <- 4   # always 4: =Q75
 
 message("Loaded ", nrow(breaks_df),
         " layer(s) from CSV: ", BREAKS_CSV)
 message("Using fixed 4-class quantile scheme (Q25/Q50/Q75)\n")
-
 
 
 # =============================================================================
@@ -172,7 +164,7 @@ for (i in seq_len(nrow(breaks_df))) {
   message("  Layer ", i, "/", nrow(breaks_df), ": ", layer_name)
   message(rep("=", 70))
   
-  if (!file.exists(fp)) { #! menas NOT
+  if (!file.exists(fp)) { #check if it exist, ! menas NOT
     warning("  [SKIP] File not found: ", fp)
     next #skip this iteration and move to next layer
   }
@@ -235,13 +227,23 @@ for (i in seq_len(nrow(breaks_df))) {
   message("  ✓ Cropped and masked to AOI")
   
   # ── 3e. Reclassify using CSV quantile breaks ───────────────────────────────
-  if (note == "single_value") {
-    single_val   <- breaks[1]   # all Q25/Q50/Q75 equal
+  if (note == "already_reclassified") { 
+    r_classified <- classify(r,
+                             matrix(c(1, 1,
+                                      2, 2,
+                                      3, 3,
+                                      4, 4),
+                                    ncol = 2, byrow = TRUE),
+                             others = NA)
+    message("  ✓ Already reclassified — values 1–4 passed through directly")
+    
+  } else if (note == "single_value") { #Was this raster marked as a single-value layer in the previous script?
+    #single_val   <- breaks[1]   # all Q25/Q50/Q75 equal, the script just takes one of them.
     r_classified <- ifel(!is.na(r),
-                         n_classes, NA)
+                         n_classes, NA) #the script simply assigns every valid pixel to the highest class:
     message("  ✓ Single-value layer → class ",
             n_classes)
-  } else {
+  } else { #otherwise RECLASSIFY using the quantiles
     # 3 thresholds → 4 classes:
     #  1: value <  Q25
     #  2: Q25 <= value <  Q50
@@ -251,10 +253,10 @@ for (i in seq_len(nrow(breaks_df))) {
     q50 <- breaks[2]
     q75 <- breaks[3]
     r_classified <- classify(r,
-                             matrix(c(-Inf, q25, 1,
+                             matrix(c(-Inf, q25, 1, #INF 
                                       q25, q50, 2,
                                       q50, q75, 3,
-                                      q75,  Inf, 4),
+                                      q75,  Inf, 4), #INF
                                     ncol = 3, byrow = TRUE),
                              include.lowest = TRUE, others = NA)
     message("  ✓ Reclassified into 4 bins",
