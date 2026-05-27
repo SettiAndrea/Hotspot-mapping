@@ -1,7 +1,7 @@
 # =============================================================================
 # ALTERNATIVE VERSION — NA-safe quantile estimation with controlled sampling
 #
-# This script computes Q25, Q50, and Q75 thresholds for raster layers
+# The script computes Q25, Q50, and Q75 thresholds for raster layers
 # after removing NoData and NA values.
 #
 # For each raster, valid pixel values are first estimated and extracted
@@ -12,33 +12,51 @@
 # are sampled using systematic (regular) sampling.
 #
 # Quantiles are then computed from the resulting set of valid pixel values.
-#
+
+
+#EDITS
+
+#include filter for already classified (check)**********
+
+#load specific layers - match name - include the specific reclassification****
+
+#plots
+
+
 # =============================================================================
 
 library(terra)
 
 # ── USER SETTINGS ─────────────────────────────────────────────────────────────
-input_dir  <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile"
-output_csv <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile/Test_prefilter.csv"
-n_classes        <- 4        # number of quantile classes
-sample_threshold <- 5e6      # rasters larger than this are sampled (after cleaning)
-sample_size      <- 500000   # number of CLEAN values to sample
+input_dir        <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile"
+output_csv       <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile/Test_prefilter.csv"
+OUT_BASE         <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/OUTPUT"
+OUT_RASTER       <- file.path(OUT_BASE, "RASTER")
+n_classes        <- 4
+sample_threshold <- 5e6
+sample_size      <- 500000
 # ──────────────────────────────────────────────────────────────────────────────
 
-
 tiff_files <- list.files(input_dir,
-                         pattern    = "\\.tif{1,2}$",
-                         full.names = TRUE,
+                         pattern     = "\\.tif{1,2}$",
+                         full.names  = TRUE,
                          ignore.case = TRUE)
 
 if (length(tiff_files) == 0) stop("No TIFF files found in: ", input_dir)
-
 message("Found ", length(tiff_files), " TIFF file(s) to process.\n")
 
 results <- lapply(tiff_files, function(fp) {
   
   layer_name <- tools::file_path_sans_ext(basename(fp))
   message("  Processing: ", layer_name)
+  
+  # ── Skip if already processed ───────────────────────────────────────────────
+  out_file <- file.path(OUT_RASTER, paste0(layer_name, ".tif"))
+  if (file.exists(out_file)) {
+    message("  [SKIP] Already processed: ", layer_name)
+    return(NULL)
+  }
+  # ────────────────────────────────────────────────────────────────────────────
   
   r      <- terra::rast(fp)
   #naflag <- terra::NAflag(r) #retrieves the internal value used by the raster to represent missing data
@@ -48,34 +66,33 @@ results <- lapply(tiff_files, function(fp) {
   # we load everything first so NA pixels are excluded
   # from the pool before any sampling takes place.
 
-   n_total <- terra::ncell(r)
-  # # Estimate number of non-NA cells without loading everything
-  #
-   n_clean <- terra::global(!is.na(r), "sum", na.rm=TRUE)[1,1]
-  # #creates a TRUE/FALSE raster: #TRUE where pixels are NA  #FALSE where pixels contain data
-  # #[1,1] extracts the actual numeric value from the returned table.
-  #
-     message("    Estimated clean pixels: ",
-             format(n_clean, big.mark=","))
-
-    set.seed(1)
-    
-    if (n_clean > sample_threshold) {
-      message("    Sampling valid pixels directly...")
-      values <- terra::spatSample(
-        r,
-        size     = sample_size,
-        method   = "regular",
-        na.rm    = TRUE,
-        values   = TRUE,
-        as.points = FALSE
-      )[,1]
+  n_total <- terra::ncell(r)
+  
+  n_clean <- terra::global(!is.na(r), "sum", na.rm=TRUE)[1,1] #
+  #creates a TRUE/FALSE raster: #TRUE where pixels are NA  #FALSE where pixels contain data
+  #[1,1] extracts the actual numeric value from the returned table.
+  
+  message("    Estimated clean pixels: ",
+          format(n_clean, big.mark=","))
+  
+  set.seed(1)
+  
+  if (n_clean > sample_threshold) {
+    message("    Sampling valid pixels...")
+    values <- terra::spatSample(
+      r,
+      size     = sample_size,
+      method   = "regular",
+      na.rm    = TRUE, #the sampling is done only on valid pixels (NA pixels are skipped).
+      values   = TRUE,
+      as.points = FALSE
+    )[,1]
   
     } else {
-  # #
-      message("    Small raster: loading valid pixels only")
-  # #
-      values <- terra::values(r, na.rm = TRUE)
+
+      message("Small raster: loading all valid pixels")
+      
+      values <- terra::values(r, na.rm = TRUE) #loads all valid pixels from the raster, except NA
     }
   
   #-----------------
@@ -88,7 +105,7 @@ results <- lapply(tiff_files, function(fp) {
   #_---------------
   
   # ── Cap filter: layers whose name contains ASIS or PEy ──────────────
-  cap_filter <- grepl("ASIS|PEy", layer_name, ignore.case = FALSE)
+  cap_filter <- grepl("ASIS|PEy", layer_name, ignore.case = TRUE)
   
   if (cap_filter) {
     values <- values[values <= 100] #Anything above 100 is removed.
@@ -134,37 +151,6 @@ results <- lapply(tiff_files, function(fp) {
     ))
   } 
   
-  # ── LAND CHANGE layers already classified (1–4) ─────────────────────────
-  # These layers already contain:
-  # 1 = Low
-  # 2 = Moderate
-  # 3 = High
-  # 4 = Very high
-  # → skip quantile calculation
-  
-  landchange_filter <- grepl(
-    "cropland_change|pastureland_change|forestland_change",
-    layer_name,
-    ignore.case = TRUE #uppercase/lowercase differences do not matter.
-  )
-  
-  if (landchange_filter) {
-    
-    message("  [NOTE] ", layer_name,
-            " already classified into 4 categories → skipping quantiles.")
-    
-    return(data.frame(
-      layer          = layer_name,
-      file_path      = fp,
-      n_classes      = n_classes,
-      n_clean_pixels = n_clean,
-      note           = "already_classified",
-      Q25            = 1,
-      Q50            = 2,
-      Q75            = 3
-    ))
-  }
-  
   # ── Normal case: compute the three quantile thresholds ───────────────────
   # Classes after reclassification:
   #   Class 1 (Low)      : value <  Q25
@@ -191,6 +177,7 @@ results <- Filter(Negate(is.null), results)
 if (length(results) == 0) stop("No layers could be processed.")
 
 breaks_df        <- do.call(rbind, results)
+
 rownames(breaks_df) <- NULL
 
 # Always overwrite the CSV on each run
