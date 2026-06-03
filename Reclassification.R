@@ -228,15 +228,7 @@ for (i in seq_len(nrow(breaks_df))) {
   
   # ── 3e. Reclassify using CSV quantile breaks ───────────────────────────────
   if (note == "already_reclassified") { 
-    r_classified <- classify(r,
-                             matrix(c(1, 1,
-                                      2, 2,
-                                      3, 3,
-                                      4, 4),
-                                    ncol = 2, byrow = TRUE),
-                             others = NA)
-    message("  ✓ Already reclassified — values 1–4 passed through directly")
-    
+    r_classified == r
   } else if (note == "single_value") { #Was this raster marked as a single-value layer in the previous script?
     #single_val   <- breaks[1]   # all Q25/Q50/Q75 equal, the script just takes one of them.
     r_classified <- ifel(!is.na(r),
