@@ -66,7 +66,48 @@ results <- lapply(tiff_files, function(fp) {
     ))
   }
   # ────────────────────────────────────────────────────────────────────────────
+  # ── Manual reclassification overrides ───────────────────────────────────────
+  # Add one entry per layer that needs fixed thresholds instead of quantiles.
+  # Copy-paste the block and change the name + Q values as needed.
   
+  manual_breaks <- list(
+      
+      "Low-lying_areas"    = list(Q25 = 20,    Q50 = 10,   Q75 = 5,    inverted = FALSE),
+      "Population_density" = list(Q25 = 10,    Q50 = 250,  Q75 = 1000, inverted = FALSE),
+      "HDI"                = list(Q25 = 0.8,   Q50 = 0.7,  Q75 = 0.55, inverted = FALSE),
+      "Poverty"            = list(Q25 = 0.001, Q50 = 14,   Q75 = 67.8, inverted = FALSE),
+      "IDPs"               = list(Q25 = 100,   Q50 = 1000, Q75 = 10000,inverted = FALSE),
+      "Food_insecurity"    = list(Q25 = 4.5,   Q50 = 7.2,  Q75 = 27.4, inverted = FALSE),
+      "Conflict_intensity" = list(Q25 = 0.01,   Q50 = 4,    Q75 = 5,    inverted = FALSE),
+      "Weather_observation"= list(Q25 = 10000, Q50 = 2500, Q75 = 625,  inverted = TRUE),
+      "Electricity_access" = list(Q25 = 30,    Q50 = 60,   Q75 = 90,   inverted = FALSE),
+      "Irrigated_areas"    = list(Q25 = 2,     Q50 = 10,   Q75 = 50,   inverted = FALSE),
+      "Rural_catchment"    = list(Q25 = 29,    Q50 = 15,   Q75 = 10,   inverted = TRUE)
+      
+    )
+    
+  )
+  # ────────────────────────────────────────────────────────────────────────────
+  
+  if (layer_name %in% names(manual_breaks)) {
+    mb <- manual_breaks[[layer_name]]
+    message("  [MANUAL] Using fixed thresholds for: ", layer_name)
+    return(data.frame(
+      layer          = layer_name,
+      file_path      = fp,
+      n_classes      = n_classes,
+      n_clean_pixels = NA,
+      note           = ifelse(isTRUE(mb$inverted), "manual_inverted", "manual_breaks"),
+      Q25            = mb$Q25,
+      Q50            = mb$Q50,
+      Q75            = mb$Q75
+    ))
+  }
+  
+  
+  
+  
+  # ──────────────────────────────────────────────────────────────────────────── 
   r      <- terra::rast(fp)
   #naflag <- terra::NAflag(r) #retrieves the internal value used by the raster to represent missing data
   

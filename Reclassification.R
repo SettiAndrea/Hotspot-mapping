@@ -227,7 +227,8 @@ for (i in seq_len(nrow(breaks_df))) {
   message("  ✓ Cropped and masked to AOI")
   
   # ── 3e. Reclassify using CSV quantile breaks ───────────────────────────────
-  if (note == "already_reclassified") { 
+ 
+   if (note == "already_reclassified") { 
     r_classified == r
   } else if (note == "single_value") { #Was this raster marked as a single-value layer in the previous script?
     #single_val   <- breaks[1]   # all Q25/Q50/Q75 equal, the script just takes one of them.
@@ -235,6 +236,20 @@ for (i in seq_len(nrow(breaks_df))) {
                          n_classes, NA) #the script simply assigns every valid pixel to the highest class:
     message("  ✓ Single-value layer → class ",
             n_classes)
+    
+  } else if (note == "manual_inverted") {
+    q25 <- breaks[1]
+    q50 <- breaks[2]
+    q75 <- breaks[3]
+    r_classified <- classify(r,
+                             matrix(c(-Inf, q25, 4,   # lowest values → Very High risk
+                                      q25,  q50, 3,
+                                      q50,  q75, 2,
+                                      q75,  Inf, 1),  # highest values → Low risk
+                                    ncol = 3, byrow = TRUE),
+                             include.lowest = TRUE, others = NA)
+    message("  ✓ Reclassified (INVERTED scale) into 4 bins")
+
   } else { #otherwise RECLASSIFY using the quantiles
     # 3 thresholds → 4 classes:
     #  1: value <  Q25
