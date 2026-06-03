@@ -25,34 +25,11 @@ tiff_files <- list.files(input_dir,
 
 if (length(tiff_files) == 0) stop("No TIFF files found in: ", input_dir) #length give the number of elements
 
-# ── Skip layers already in the CSV ───────────────────────
-existing_layers <- character(0) #empty text vector ???
-existing_df     <- NULL #object must not exist
+# ── Always produce a new CSV based on th files in the folder ───────────────────────
+message("Found ", length(tiff_files),
+        " TIFF file(s) to process.\n")
 
-if (file.exists(output_csv)) {
-  existing_df     <- read.csv(output_csv, stringsAsFactors = FALSE) #does the layer already exist in the output? - so reads the output CSV, 
-  existing_layers <- existing_df$layer #extract the LAYER COLUMN
-  message("Existing CSV found with ", nrow(existing_df), " layer(s) already processed.")
-} else {
-  message("No existing CSV found — processing all layers.")
-}
-
-# Filter to only TIFFs not yet in the CSV
-all_layer_names <- tools::file_path_sans_ext(basename(tiff_files)) #GETS THE NAME OF THE RASTER CLEANING IT
-new_idx         <- !all_layer_names %in% existing_layers #Check membership returning true or false for each layer (the ! negate the result), TRUE=NEW RASTER
-tiff_files      <- tiff_files[new_idx] #This keeps ONLY new rasters.
-
-if (length(tiff_files) == 0) {
-  message("✓ All layers already processed. Nothing to do.")
-  quit(save = "no")
-}
-
-message("Found ", length(tiff_files), " new TIFF file(s) to process.\n")
-
-# Probability cut-points that define n_classes equal-frequency classes.
-# For 4 classes: 0%, 25%, 50%, 75%, 100%  →  breaks at 25 / 50 / 75 percentiles
-
-#probs <- seq(0, 1, length.out = n_classes + 1) #Creates quantile probabilities.
+#-----Sampling and NA data--------
 
 results <- lapply(tiff_files, function(fp) {
   
@@ -60,37 +37,41 @@ results <- lapply(tiff_files, function(fp) {
   message("  Processing: ", layer_name)
   
   r       <- terra::rast(fp) #Loads raster.
+  naflag <- terra::NAflag(r)   # Reads the NoData flag stored in the raster file's metadata.
+  #                              We fetch it once here, before any branching, so we don't repeat the call twice below.
   
-  
-  # NA REMOVE****
-  #***
-  #*****
-  #REMOVE THE NA FILTER AFTER THE SAMPLING
-  
-  
-  
-  # For large rasters, sample instead of loading all values into RAM.
-  # 500k cells is more than enough for stable quantile estimates.
-  
-  n_cells <- terra::ncell(r) #Counts total raster pixels.
-  set.seed(1)
+  n_cells <- terra::ncell(r)
+  set.seed(1)                #Fixes the random number generator so the sample is identical every time 
   if (n_cells > sample_threshold) {
-    message("    (large raster: ", format(n_cells, big.mark = ","),
-            " cells — sampling ", format(sample_size, big.mark = ","), " cells)")
-    vals_raw <- terra::spatSample(r, size = sample_size,#extract a sample
-                                  method = "regular", #Pixels are sampled evenly across raster space -- 
-                                  as.df = FALSE)[, 1] #Returns vector/matrix instead of dataframe.
+    vals_raw <- terra::spatSample(
+      r, size = sample_size,
+      method = "regular",    #means a systematic grid, not random scatter 
+      as.df  = FALSE)[, 1] #as.df = FALSE returns a plain matrix instead of a data frame — faster. 
+                                    #The [, 1] at the end extracts just the first (and usually only) column as a vector. 
     
-    # Remove both R NAs and any value declared as the raster's NoData flag
-    naflag   <- terra::NAflag(r)
-    if (!is.na(naflag)) vals_raw <- vals_raw[vals_raw != naflag] #Even sampled values may include NoData so it cleans it (Does this REDUCE THE SAMPLING???)
-    values   <- vals_raw[!is.na(vals_raw)]
-  } else {
-    values <- terra::values(r, mat = FALSE)
-    naflag <- terra::NAflag(r)
-    if (!is.na(naflag)) values <- values[values != naflag]
-    values <- values[!is.na(values)]
+    # Remove NAs — right after sampling
+    if (!is.na(naflag)) vals_raw <-
+        vals_raw[vals_raw != naflag]    #If the raster actually has a NoData flag (i.e. naflag is not itself NA), 
+    #                                   remove any sample values that equal that sentinel number. 
+    values <- vals_raw[!is.na(vals_raw)] #Now remove any remaining R-level NAs (pixels that terra itself marked as missing). 
+    
+      #                                    The result, values, is a clean numeric vector ready for quantile calculation.
+  } else { #FOR SMALL RASTERS — safe to load every pixel into memory
+    values <- terra::values(r, mat = FALSE) #FALSE skips the matrix wrapper
+    if (!is.na(naflag)) values <- 
+        values[values != naflag] ##Same NA value removal as in the sampling branch — naflag <- terra::NAflag(r)   # 
+  
+    values <- values[!is.na(values)] #Remove R-level NAs. After this line, both branches arrive at the same place: a clean values vector with no missing values of any kind.
   }
+    
+    # ── Cap filter: layers whose name contains ASIS or PEy ─────────────────
+    cap_filter <- grepl("ASIS|PEy", layer_name, ignore.case = FALSE)
+    if (cap_filter) {
+      values <- values[values <= 100]
+      message("    [cap filter] '", layer_name,
+              "' — keeping only values <= 100 (",
+              format(length(values), big.mark = ","), " values remaining)")
+    }
   
   if (length(values) == 0) {
     warning("  [SKIP] ", layer_name, " — no non-NA values found.")
@@ -102,58 +83,52 @@ results <- lapply(tiff_files, function(fp) {
   # ── Edge case: only one unique value → assign highest class ─────────────────
   if (length(unique_vals) == 1) {
     message("  [NOTE] ", layer_name,
-            " has a single unique value (", unique_vals,
-            "). Assigning highest class (", n_classes, ").")
-    
-    # breaks 0 … (n_classes-1) = 0, only break_n_classes holds the actual value
-    breaks <- c(rep(0, n_classes), unique_vals)
+            " has a single unique value (",
+            unique_vals,
+            "). Assigning highest class (",
+            n_classes, ").")
     
     return(data.frame(
       layer      = layer_name,
       file_path  = fp,
       n_classes  = n_classes,
       note       = "single_value",
-      # break_0 = lower bound (inclusive min), break_4 = upper bound
-      t(setNames(breaks, paste0("break_", 0:n_classes)))
+      Q25        = unique_vals,
+      Q50        = unique_vals,
+      Q75        = unique_vals
     ))
   }
   
   # ── Normal case: compute quantile breaks ───────────────────────────────────
-  probs=c(0.25,0.50,0.75)
-  breaks <- as.numeric(quantile(values, probs = probs, na.rm = TRUE))
-  
-  # Guarantee strictly increasing breaks so reclassification is unambiguous:
-  # if duplicate break values exist (e.g. highly skewed data), nudge them apart
-  # so each class interval is non-empty.
-#  for (i in seq(2, length(breaks))) {
-#    if (breaks[i] <= breaks[i - 1]) {
-#      breaks[i] <- breaks[i - 1] + .Machine$double.eps * abs(breaks[i - 1]) * 1e6
- #   }
- # }
+  breaks <- as.numeric(
+    quantile(values,
+             probs = c(0.25, 0.50, 0.75),
+             na.rm = TRUE))
   
   data.frame(
-    layer      = layer_name,
-    file_path  = fp,
-    n_classes  = n_classes,
-    note       = "ok",
-    t(setNames(breaks, paste0("break_", 0:n_classes)))
+    layer     = layer_name,
+    file_path = fp,
+    n_classes = n_classes,
+    note      = ifelse(cap_filter, "capped_at_100", "ok"),
+    Q25       = breaks[1],
+    Q50       = breaks[2],
+    Q75       = breaks[3]
   )
 })
 
-# Drop any NULLs (skipped layers)
-#results <- Filter(Negate(is.null), results)
 
 if (length(results) == 0) stop("No new layers could be processed.")
 
 new_df <- do.call(rbind, results)
 rownames(new_df) <- NULL
 
-# Combine with existing rows (if any) and write
-breaks_df <- if (!is.null(existing_df)) rbind(existing_df, new_df) else new_df
+breaks_df <- new_df
 
-write.csv(breaks_df, output_csv, row.names = FALSE, quote = TRUE)
+write.csv(breaks_df, output_csv,
+          row.names = FALSE, quote = TRUE)
 
-message("\n✓ CSV updated: ", normalizePath(output_csv, mustWork = FALSE))
-message("  ", nrow(new_df), " new layer(s) added | ",
-        nrow(breaks_df), " total layer(s) in CSV.")
-print(new_df[, c("layer", "note", paste0("break_", 0:n_classes))])
+message("\n✓ CSV written: ",
+  normalizePath(output_csv, mustWork = FALSE))
+message("  ", nrow(breaks_df), " layer(s) written to CSV.")
+print(breaks_df[, c("layer", "note",
+  "Q25", "Q50", "Q75")])
