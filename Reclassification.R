@@ -191,17 +191,18 @@ for (i in seq_len(nrow(breaks_df))) {
   }
   
   # Common fill values
-  r[r %in% c(-9999, -32768)] <- NA
+ # r[r %in% c(-9999, -32768)] <- NA
   
   # Extreme floating-point fill values (CORDEX / CMIP / NetCDF)
-  r[r >  1e20] <- NA
-  r[r < -1e20] <- NA
+  #r[r >  1e20] <- NA
+  #r[r < -1e20] <- NA
   
-  # ASIS / PyAEZ filter (values > 100 are invalid)
-  if (str_detect(tolower(layer_name), "pey|asy")) {
+  # ASIS / land chenages filter (values > 100 are invalid)
+  if (str_detect(tolower(layer_name), "pey|asy|cropland|pastureland|forestland")) {
     r[r > 100] <- NA
     message("  ✓ ASIS filter applied (> 100 → NA)")
   }
+  
   
   message("  ✓ NoData cleaning complete")
   
@@ -229,7 +230,7 @@ for (i in seq_len(nrow(breaks_df))) {
   # ── 3e. Reclassify using CSV quantile breaks ───────────────────────────────
  
    if (note == "already_reclassified") { 
-    r_classified == r
+    r_classified <- r
   } else if (note == "single_value") { #Was this raster marked as a single-value layer in the previous script?
     #single_val   <- breaks[1]   # all Q25/Q50/Q75 equal, the script just takes one of them.
     r_classified <- ifel(!is.na(r),
@@ -241,11 +242,18 @@ for (i in seq_len(nrow(breaks_df))) {
     q25 <- breaks[1]
     q50 <- breaks[2]
     q75 <- breaks[3]
+    
+    # terra::classify() requires from < to in every row,
+    # so we sort breaks ascending but flip the class numbers
+    b_lo <- min(q75, q50, q25)   # 10
+    b_mid <- median(c(q75, q50, q25))  # 15
+    b_hi <- max(q75, q50, q25)   # 29
+    
     r_classified <- classify(r,
-                             matrix(c(-Inf, q25, 4,   # lowest values → Very High risk
-                                      q25,  q50, 3,
-                                      q50,  q75, 2,
-                                      q75,  Inf, 1),  # highest values → Low risk
+                             matrix(c(-Inf,  b_lo,  4,   # < 10  → Very High
+                                      b_lo,  b_mid, 3,   # 10–15 → High
+                                      b_mid, b_hi,  2,   # 15–29 → Moderate
+                                      b_hi,  Inf,   1),  # > 29  → Low
                                     ncol = 3, byrow = TRUE),
                              include.lowest = TRUE, others = NA)
     message("  ✓ Reclassified (INVERTED scale) into 4 bins")
