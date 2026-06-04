@@ -54,16 +54,17 @@ results <- lapply(tiff_files, function(fp) {
   out_file <- file.path(OUT_RASTER, paste0(layer_name, ".tif"))
   if (file.exists(out_file)) {
     message("  [SKIP] Already processed: ", layer_name)
-    return(data.frame(
-      layer          = layer_name,
-      file_path      = fp,
-      n_classes      = n_classes,
-      n_clean_pixels = NA,
-      note           = "already_reclassified",
-      Q25            = NA,
-      Q50            = NA,
-      Q75            = NA
-    ))
+    return(NULL) #A rerun on an existing output → skipped silently, not written to CSV, not processed again in Reclassification.R
+    # return(data.frame(
+    #   layer          = layer_name,
+    #   file_path      = fp,
+    #   n_classes      = n_classes,
+    #   n_clean_pixels = NA,
+    #   note           = "already_reclassified",
+    #   Q25            = NA,
+    #   Q50            = NA,
+    #   Q75            = NA
+    # ))
   }
   # ────────────────────────────────────────────────────────────────────────────
   # ── Manual reclassification overrides ───────────────────────────────────────
@@ -72,13 +73,13 @@ results <- lapply(tiff_files, function(fp) {
   
   manual_breaks <- list(
       
-      "Low-lying_areas"    = list(Q25 = 20,    Q50 = 10,   Q75 = 5,    inverted = FALSE),
+      "Low-lying_areas"    = list(Q25 = 20,    Q50 = 10,   Q75 = 5,    inverted = TRUE),
       "Population_density" = list(Q25 = 10,    Q50 = 250,  Q75 = 1000, inverted = FALSE),
-      "HDI"                = list(Q25 = 0.8,   Q50 = 0.7,  Q75 = 0.55, inverted = FALSE),
+      "HDI"                = list(Q25 = 0.8,   Q50 = 0.7,  Q75 = 0.55, inverted = TRUE),
       "Poverty"            = list(Q25 = 0.001, Q50 = 14,   Q75 = 67.8, inverted = FALSE),
       "IDPs"               = list(Q25 = 100,   Q50 = 1000, Q75 = 10000,inverted = FALSE),
       "Food_insecurity"    = list(Q25 = 4.5,   Q50 = 7.2,  Q75 = 27.4, inverted = FALSE),
-      "Conflict_intensity" = list(Q25 = 0.01,   Q50 = 4,    Q75 = 5,    inverted = FALSE),
+      "Conflict_intensity" = list(Q25 = 0.01,  Q50 = 4,    Q75 = 5,    inverted = FALSE),
       "Weather_observation"= list(Q25 = 10000, Q50 = 2500, Q75 = 625,  inverted = TRUE),
       "Electricity_access" = list(Q25 = 30,    Q50 = 60,   Q75 = 90,   inverted = FALSE),
       "Irrigated_areas"    = list(Q25 = 2,     Q50 = 10,   Q75 = 50,   inverted = FALSE),
@@ -86,7 +87,6 @@ results <- lapply(tiff_files, function(fp) {
       
     )
     
-  )
   # ────────────────────────────────────────────────────────────────────────────
   
   if (layer_name %in% names(manual_breaks)) {
@@ -103,6 +103,36 @@ results <- lapply(tiff_files, function(fp) {
       Q75            = mb$Q75
     ))
   }
+  
+  # ────────────────────────────────────────────────────────────────────────────
+  # ── Layers already classified at source (use raster values as-is) ────────── so 
+  #A source-classified layer → always explicitly listed by name, flagged correctly, and handled as-is in Reclassification.R
+  already_classified <- c(
+    "Cropland_change",
+    "Pastureland_change",
+    "Forestland_change",
+    "Human_pressure"
+  )
+  
+  matched_classified <- already_classified[tolower(already_classified) == tolower(layer_name)]
+  
+  if (length(matched_classified) == 1) {
+    message("  [SOURCE-CLASSIFIED] Using raster values as-is: ", layer_name)
+    return(data.frame(
+      layer          = layer_name,
+      file_path      = fp,
+      n_classes      = n_classes,
+      n_clean_pixels = NA,
+      note           = "already_reclassified",
+      Q25            = NA,
+      Q50            = NA,
+      Q75            = NA
+    ))
+  }
+  
+  
+  
+  
   
   
   
