@@ -83,7 +83,9 @@ results <- lapply(tiff_files, function(fp) {
       "Weather_observation"= list(Q25 = 10000, Q50 = 2500, Q75 = 625,  inverted = TRUE),
       "Electricity_access" = list(Q25 = 30,    Q50 = 60,   Q75 = 90,   inverted = FALSE),
       "Irrigated_areas"    = list(Q25 = 2,     Q50 = 10,   Q75 = 50,   inverted = FALSE),
-      "Rural_catchment"    = list(Q25 = 29,    Q50 = 15,   Q75 = 10,   inverted = TRUE)
+      "Rural_catchment"    = list(Q25 = 29,    Q50 = 15,   Q75 = 10,   inverted = TRUE),
+      "Livestock_density"  = list(Q25 = 0,     Q50 = 10,   Q75 = 100,  inverted = FALSE),
+      "GDI"                = list(Q25 = 0.966, Q50 = 0.984,Q75 = 1.001,inverted = TRUE)
       
     )
     
@@ -134,9 +136,6 @@ results <- lapply(tiff_files, function(fp) {
   
   
   
-  
-  
-  
   # ──────────────────────────────────────────────────────────────────────────── 
   r      <- terra::rast(fp)
   #naflag <- terra::NAflag(r) #retrieves the internal value used by the raster to represent missing data
@@ -170,9 +169,17 @@ results <- lapply(tiff_files, function(fp) {
   
     } else {
 
-      message("Small raster: loading all valid pixels")
-      
-      values <- terra::values(r, na.rm = TRUE) #loads all valid pixels from the raster, except NA
+      # ── Use spatSample instead of terra::values() to avoid loading the full
+      #    raster extent into RAM (total cells >> valid cells for sparse layers)
+      message("    Loading valid pixels via spatSample...")
+      values <- terra::spatSample(
+        r,
+        size      = max(n_clean, 1L),   # request at most the known valid count
+        method    = "regular",
+        na.rm     = TRUE,
+        values    = TRUE,
+        as.points = FALSE
+      )[,1]
     }
   
   #-----------------
