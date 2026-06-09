@@ -191,11 +191,11 @@ for (i in seq_len(nrow(breaks_df))) {
   }
   
   # Common fill values
- # r[r %in% c(-9999, -32768)] <- NA
+ r[r %in% c(-9999, -32768)] <- NA
   
   # Extreme floating-point fill values (CORDEX / CMIP / NetCDF)
-  #r[r >  1e20] <- NA
-  #r[r < -1e20] <- NA
+  r[r >  1e20] <- NA
+  r[r < -1e20] <- NA
   
   # ASIS / land chenages filter (values > 100 are invalid)
   if (str_detect(tolower(layer_name), "pey|asy|cropland|pastureland|forestland")) {
@@ -239,18 +239,18 @@ for (i in seq_len(nrow(breaks_df))) {
             n_classes)
     
   } else if (note == "manual_inverted") {
-    q25 <- breaks[1]
+    q25 <- breaks[1] #reads the thersholds
     q50 <- breaks[2]
     q75 <- breaks[3]
     
     # terra::classify() requires from < to in every row,
     # so we sort breaks ascending but flip the class numbers
-    b_lo <- min(q75, q50, q25)   # 10
-    b_mid <- median(c(q75, q50, q25))  # 15
-    b_hi <- max(q75, q50, q25)   # 29
+    b_lo <- min(q75, q50, q25)   # find and store the lowest threshold e.g. 10
+    b_mid <- median(c(q75, q50, q25))  # find and store the mid threshold e.g.15
+    b_hi <- max(q75, q50, q25)   # find and store the highest threshold e.g.29
     
     r_classified <- classify(r,
-                             matrix(c(-Inf,  b_lo,  4,   # < 10  → Very High
+                             matrix(c(-Inf,  b_lo,  4,   # < 10 (LOWEST (Q25) ASSIGNED TO 4 → Very High
                                       b_lo,  b_mid, 3,   # 10–15 → High
                                       b_mid, b_hi,  2,   # 15–29 → Moderate
                                       b_hi,  Inf,   1),  # > 29  → Low
