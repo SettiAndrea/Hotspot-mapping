@@ -23,7 +23,6 @@
 
 # - Option to calculate the quantile at national level - Only if needed in the future
 
-
 # ── 0. LIBRARIES & SETTINGS ───────────────────────────────────────────────────
 
 library(terra)
@@ -31,22 +30,26 @@ library(sf)
 library(tidyverse)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-GAUL0_PATH  <- "/Volumes/Andrea_GIS/g2015_2014_0/g2015_2014_0/g2015_2014_0.shp"
-REF_PATH    <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Test_Buodaries_Standardization/Mangroves.tif"
-BREAKS_CSV  <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile/Test_prefilter.csv"           
+GAUL0_PATH  <- "/home/jovyan/FAO_climate_risks_team/notebooks/Andrea/Hotspot mapping/GAUL0/g2015_2014_0.shp"
+REF_PATH    <- "/home/jovyan/FAO_climate_risks_team/notebooks/Andrea/Hotspot mapping/Reference/Mangroves.tif"
+BREAKS_CSV  <- "/home/jovyan/FAO_climate_risks_team/notebooks/Andrea/Hotspot mapping/Repository/Breaks_summary.csv"           
 
-OUT_BASE    <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/OUTPUT"
-OUT_RASTER  <- file.path(OUT_BASE, "RASTER")
-OUT_FIGURE  <- file.path(OUT_BASE, "FIGURE")
+OUT_BASE        <- file.path(getwd(), "OUT")
+OUT_EXP         <- file.path(OUT_BASE, "Reclassified_EXP")
+OUT_VUL         <- file.path(OUT_BASE, "Reclassified_VUL")
+OUT_AC          <- file.path(OUT_BASE, "Reclassified_AC")
 
-dir.create(OUT_RASTER, showWarnings = FALSE, recursive = TRUE)
-dir.create(OUT_FIGURE, showWarnings = FALSE, recursive = TRUE)
+dir.create(OUT_EXP, showWarnings = FALSE, recursive = TRUE)
+dir.create(OUT_VUL, showWarnings = FALSE, recursive = TRUE)
+dir.create(OUT_AC,  showWarnings = FALSE, recursive = TRUE)
+
+message("✓ Output folders ready under: ", OUT_BASE)
 
 # ── AOI settings ──────────────────────────────────────────────────────────────
 aoi_mode     <- "GAUL0"       # "GAUL0" | "GAUL1" | "EXTENT" | "SHAPEFILE"
 country_name <- "Uganda"
 country_ext  <- ext(-61.1, -60.85, 13.69, 14.12)   # used only if aoi_mode = "EXTENT"
-shp_path     <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Boundaries/CostaRica.shp"  # SHAPEFILE mode
+shp_path     <- "Shape/Mauritius.shp"  # SHAPEFILE mode
 
 # ── Classification labels & colours (shared across all layers) ──────────────── To be added ASIS classification? 
 bin_labels  <- c("1" = "Low", "2" = "Moderate", "3" = "High", "4" = "Very high")
@@ -55,7 +58,6 @@ bin_colours <- c("Low"       = "#d9ef8b",
                  "Moderate"  = "#fee08b",
                  "High"      = "#f46d43",
                  "Very high" = "#a50026")
-
 
 # =============================================================================
 # 1. AOI DEFINITION
@@ -82,7 +84,7 @@ get_aoi <- function(mode, country_name = NULL, shp_path = NULL, country_ext = NU
     
   } else if (mode == "GAUL1") {
     
-    gaul1 <- st_read("/Volumes/Andrea_GIS/GAUL_2024_L1/GAUL_2024_L1.shp", quiet = TRUE)
+    gaul1 <- st_read("/home/jovyan/FAO_climate_risks_team/notebooks/Andrea/Hotspot mapping/GAUL1/gaul_2025_l1.shp", quiet = TRUE)
     aoi   <- gaul1 %>% filter(tolower(gaul1_name) == tolower(country_name))
     if (nrow(aoi) == 0) stop("❌ No GAUL1 match for '", country_name, "'")
     if (nrow(aoi) > 1) message("⚠️  ", nrow(aoi), " features matched → using all")
@@ -151,14 +153,17 @@ message("Using fixed 4-class quantile scheme (Q25/Q50/Q75)\n")
 # =============================================================================
 
 for (i in seq_len(nrow(breaks_df))) {
- #The above means "repeat the following code once for every row in the dataframe" 
-  row        <- breaks_df[i, ] #This extracts ONE row from the dataframe (i iteration) \ follows the extraction of variables 
+  row        <- breaks_df[i, ]
   layer_name <- row$layer
   fp         <- row$file_path
   note       <- row$note
-  breaks     <- as.numeric(c(row$Q25, row$Q50, row$Q75))
-  n_clean    <- if ("n_clean_pixels" %in% names(row))
-    row$n_clean_pixels else NA
+  
+  # Process ONLY SPECIFIC LAYERS
+  if (!(layer_name %in% c("Livestock_density"))) {
+    next
+  }
+  
+  message("Processing only: ", layer_name)
   
   message(rep("=", 70))
   message("  Layer ", i, "/", nrow(breaks_df), ": ", layer_name)
@@ -167,6 +172,19 @@ for (i in seq_len(nrow(breaks_df))) {
   if (!file.exists(fp)) { #check if it exist, ! menas NOT
     warning("  [SKIP] File not found: ", fp)
     next #skip this iteration and move to next layer
+  }
+  
+  # ── Determine output folder from source path (AC / EXP / VUL) ─────────────
+  if (grepl("Raw_AC", fp, fixed = TRUE)) {
+    out_dir <- OUT_AC
+  } else if (grepl("Raw_EXP", fp, fixed = TRUE)) {
+    out_dir <- OUT_EXP
+  } else if (grepl("Raw_VUL", fp, fixed = TRUE)) {
+    out_dir <- OUT_VUL
+  } else {
+    warning("  [WARN] Could not determine category (AC/EXP/VUL) for: ", layer_name,
+            " — saving to OUT_BASE instead")
+    out_dir <- OUT_BASE
   }
   
   # ── 3a. Load ───────────────────────────────────────────────────────────────
@@ -191,19 +209,19 @@ for (i in seq_len(nrow(breaks_df))) {
   }
   
   # Common fill values
- r[r %in% c(-9999, -32768)] <- NA
+  r[r %in% c(-9999, -32768)] <- NA
   
   # Extreme floating-point fill values (CORDEX / CMIP / NetCDF)
   r[r >  1e20] <- NA
   r[r < -1e20] <- NA
   
   # ASIS / land chenages filter (values > 100 are invalid)
-  if (str_detect(tolower(layer_name), "pey|asy|cropland|pastureland|forestland")) {
+  if (str_detect(layer_name,
+                 regex("asis|pey|asy|cropland|pastureland|forestland",
+                       ignore_case = TRUE))) {
+    
     r[r > 100] <- NA
-    message("  ✓ ASIS filter applied (> 100 → NA)")
-  }
-  
-  
+  } 
   message("  ✓ NoData cleaning complete")
   
   # ── 3d. Crop + mask to AOI ─────────────────────────────────────────────────
@@ -229,7 +247,7 @@ for (i in seq_len(nrow(breaks_df))) {
   
   # ── 3e. Reclassify using CSV quantile breaks ───────────────────────────────
  
-   if (note == "already_reclassified") { 
+  if (note == "already_reclassified") { 
     r_classified <- r
   } else if (note == "single_value") { #Was this raster marked as a single-value layer in the previous script?
     #single_val   <- breaks[1]   # all Q25/Q50/Q75 equal, the script just takes one of them.
@@ -257,7 +275,7 @@ for (i in seq_len(nrow(breaks_df))) {
                                     ncol = 3, byrow = TRUE),
                              include.lowest = TRUE, others = NA)
     message("  ✓ Reclassified (INVERTED scale) into 4 bins")
-
+    
   } else { #otherwise RECLASSIFY using the quantiles
     # 3 thresholds → 4 classes:
     #  1: value <  Q25
@@ -290,10 +308,16 @@ for (i in seq_len(nrow(breaks_df))) {
   
   # ── 3f. Resample to reference resolution ───────────────────────────────────
   r_final <- resample(r_classified, r_ref, method = "near")
+  
+  # Mask again after resampling
+  r_final <- crop(r_final, mask_vect)
+  r_final <- mask(r_final, mask_vect)
+  
   message(sprintf("  ✓ Resampled to %.6f° x %.6f°", res(r_final)[1], res(r_final)[2]))
+  message("  ✓ Cropped and masked again after resampling")
   
   # ── 3g. Export TIFF ────────────────────────────────────────────────────────
-  out_tif <- file.path(OUT_RASTER, paste0(layer_name, ".tif"))
+  out_tif <- file.path(out_dir, paste0(layer_name, ".tif"))
   writeRaster(r_final, out_tif,
               overwrite = TRUE,
               datatype  = "INT1U",
@@ -324,7 +348,7 @@ for (i in seq_len(nrow(breaks_df))) {
     ) +
     scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
     labs(
-      title = paste(layer_name, "— standardised"),
+      title = paste(layer_name),
       fill  = "Class",
       x     = "Longitude",
       y     = "Latitude"
@@ -334,13 +358,87 @@ for (i in seq_len(nrow(breaks_df))) {
           legend.position = "bottom",
           plot.title      = element_text(face = "bold"))
   
-  out_png <- file.path(OUT_FIGURE, paste0(layer_name, ".png"))
+  out_png <- file.path(out_dir, paste0(layer_name, ".png"))
   ggsave(out_png, plot = p, dpi = 300)
   message("  ✓ PNG  exported → ", out_png, "\n")
-}
+
+  }   # <-- closes the for loop
 
 message(rep("=", 70))
 message("✓ All layers processed.")
-message("  TIFFs → ", OUT_RASTER)
-message("  PNGs  → ", OUT_FIGURE)
+message("  Reclassified layers → ", OUT_BASE)
+message(rep("=", 70))
+
+#-------
+  
+# ── STEP 5: BUILD CUMULATIVE EXP / VUL / AC LAYERS ─────────────────────────────
+# Stack every reclassified TIFF within each category folder and average across
+# layers. Since every layer was already resampled onto r_ref inside the main
+# loop above, all rasters in a folder already share the exact same grid — no
+# additional alignment is needed here, just stack + average.
+
+build_cumulative_layer <- function(folder, name, out_dir) {
+  tif_files <- list.files(folder, pattern = "\\.tif{1,2}$", full.names = TRUE, ignore.case = TRUE)
+  if (length(tif_files) == 0) {
+    cat("No rasters found in", folder, "- skipping", name, "\n")
+    return(NULL)
+  }
+  cat("Stacking", length(tif_files), "layer(s) for", name, ":\n  ",
+      paste(basename(tif_files), collapse = ", "), "\n")
+  
+  stacked    <- terra::rast(tif_files)
+  cumulative <- terra::app(stacked, fun = mean, na.rm = TRUE)
+  names(cumulative) <- name
+  
+  out_tif <- file.path(out_dir, paste0(name, ".tif"))
+  terra::writeRaster(cumulative, out_tif, overwrite = TRUE, datatype = "FLT4S")
+  cat("✓ TIFF saved:", out_tif, "\n")
+  
+  # ── PNG export ──────────────────────────────────────────────────────────────
+  cum_df <- terra::as.data.frame(cumulative, xy = TRUE, na.rm = TRUE)
+  names(cum_df)[3] <- "value"
+  
+  mask_sf <- sf::st_as_sf(mask_vect)
+  
+  p <- ggplot(cum_df, aes(x = x, y = y, fill = value)) +
+    geom_tile() +
+    geom_sf(data = mask_sf, fill = NA, color = "black",
+            linewidth = 0.2, inherit.aes = FALSE) +
+    coord_sf(xlim = plot_xlim, ylim = plot_ylim, expand = TRUE) +
+    scale_fill_gradientn(colors = c("#1a9850", "#fee08b", "#d73027"),
+                         name = "Mean class\n(1=Low, 4=Very high)",
+                         limits = c(1, 4)) +
+    labs(title = name, x = "Longitude", y = "Latitude") +
+    theme_bw() +
+    theme(panel.grid      = element_blank(),
+          legend.position = "bottom",
+          plot.title      = element_text(face = "bold"))
+  
+  out_png <- file.path(out_dir, paste0(name, ".png"))
+  ggsave(out_png, plot = p, dpi = 300)
+  cat("✓ PNG  saved:", out_png, "\n\n")
+  
+  cumulative
+}
+
+OUT_CUMULATIVE <- file.path(OUT_BASE, "Cumulative")
+dir.create(OUT_CUMULATIVE, showWarnings = FALSE, recursive = TRUE)
+
+Cumulative_EXP <- build_cumulative_layer(OUT_EXP, "Cumulative_EXP", OUT_CUMULATIVE)
+Cumulative_VUL <- build_cumulative_layer(OUT_VUL, "Cumulative_VUL", OUT_CUMULATIVE)
+Cumulative_AC  <- build_cumulative_layer(OUT_AC,  "Cumulative_AC",  OUT_CUMULATIVE)
+
+# ── Sanity check: confirm all three cumulative layers share the exact same grid ──
+if (!is.null(Cumulative_EXP) && !is.null(Cumulative_VUL)) {
+  cat("EXP vs VUL geometry match:\n")
+  print(terra::compareGeom(Cumulative_EXP, Cumulative_VUL, stopOnError = FALSE))
+}
+if (!is.null(Cumulative_EXP) && !is.null(Cumulative_AC)) {
+  cat("EXP vs AC geometry match:\n")
+  print(terra::compareGeom(Cumulative_EXP, Cumulative_AC, stopOnError = FALSE))
+}
+
+message(rep("=", 70))
+message("✓ Cumulative EXP / VUL / AC layers built.")
+message("  Output → ", OUT_CUMULATIVE)
 message(rep("=", 70))
