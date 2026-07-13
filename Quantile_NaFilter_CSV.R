@@ -28,19 +28,26 @@
 library(terra)
 
 # ── USER SETTINGS ─────────────────────────────────────────────────────────────
-input_dir        <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile"
-output_csv       <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/Quantile/Test_prefilter.csv"
-OUT_BASE         <- "/Volumes/Andrea_GIS/Hotspot Mapping/R_test/OUTPUT"
+input_dir        <- "/home/jovyan/FAO_climate_risks_team/notebooks/Andrea/Hotspot mapping/Repository"
+output_csv       <- "/home/jovyan/FAO_climate_risks_team/notebooks/Andrea/Hotspot mapping/Repository/Breaks_summary.csv"
+OUT_BASE         <- "/home/jovyan/FAO_climate_risks_team/notebooks/Andrea/Hotspot mapping/Repository"
 OUT_RASTER       <- file.path(OUT_BASE, "RASTER")
 n_classes        <- 4
 sample_threshold <- 5e6
 sample_size      <- 500000
 # ──────────────────────────────────────────────────────────────────────────────
 
+#For ALL THE TIFF in the repository-------
 tiff_files <- list.files(input_dir,
                          pattern     = "\\.tif{1,2}$",
                          full.names  = TRUE,
-                         ignore.case = TRUE)
+                         ignore.case = TRUE,
+                         recursive   = TRUE)
+
+#For ONLY SPECIFIC tiff-----
+#tiff_files <- c(
+#  "/home/jovyan/FAO_climate_risks_team/notebooks/Andrea/Hotspot mapping/Repository/Raw_EXP/Livestock_density.tif"
+#)
 
 if (length(tiff_files) == 0) stop("No TIFF files found in: ", input_dir)
 message("Found ", length(tiff_files), " TIFF file(s) to process.\n")
@@ -66,6 +73,7 @@ results <- lapply(tiff_files, function(fp) {
     #   Q75            = NA
     # ))
   }
+  
   # ────────────────────────────────────────────────────────────────────────────
   # ── Manual reclassification overrides ───────────────────────────────────────
   # Add one entry per layer that needs fixed thresholds instead of quantiles.
@@ -107,7 +115,7 @@ results <- lapply(tiff_files, function(fp) {
   }
   
   # ────────────────────────────────────────────────────────────────────────────
-  # ── Layers already classified at source (use raster values as-is) ────────── so 
+  # ── Layers already classified at source (use raster values as-is) ────────── so
   #A source-classified layer → always explicitly listed by name, flagged correctly, and handled as-is in Reclassification.R
   already_classified <- c(
     "Cropland_change",
@@ -132,11 +140,8 @@ results <- lapply(tiff_files, function(fp) {
     ))
   }
   
-  
-  
-  
-  
   # ──────────────────────────────────────────────────────────────────────────── 
+  # ────────────────────────────────────────────────────────────────────────────
   r      <- terra::rast(fp)
   #naflag <- terra::NAflag(r) #retrieves the internal value used by the raster to represent missing data
   
@@ -144,7 +149,7 @@ results <- lapply(tiff_files, function(fp) {
   # (This is the key difference from the original script)
   # we load everything first so NA pixels are excluded
   # from the pool before any sampling takes place.
-
+  
   n_total <- terra::ncell(r)
   
   n_clean <- terra::global(!is.na(r), "sum", na.rm=TRUE)[1,1] #
@@ -166,33 +171,33 @@ results <- lapply(tiff_files, function(fp) {
       values   = TRUE,
       as.points = FALSE
     )[,1]
-  
-    } else {
-
-      # ── Use spatSample instead of terra::values() to avoid loading the full
-      #    raster extent into RAM (total cells >> valid cells for sparse layers)
-      message("    Loading valid pixels via spatSample...")
-      values <- terra::spatSample(
-        r,
-        size      = max(n_clean, 1L),   # request at most the known valid count
-        method    = "regular",
-        na.rm     = TRUE,
-        values    = TRUE,
-        as.points = FALSE
-      )[,1]
-    }
+    
+  } else {
+    
+    # ── Use spatSample instead of terra::values() to avoid loading the full
+    #    raster extent into RAM (total cells >> valid cells for sparse layers)
+    message("    Loading valid pixels via spatSample...")
+    values <- terra::spatSample(
+      r,
+      size      = max(n_clean, 1L),   # request at most the known valid count
+      method    = "regular",
+      na.rm     = TRUE,
+      values    = TRUE,
+      as.points = FALSE
+    )[,1]
+  }
   
   #-----------------
   
   # NO SAMPLING — load all valid pixels
-   # values <- terra::values(r, mat = FALSE, 
-   #                         na.rm = TRUE)
-   # message("    Loaded all valid values.")
+  # values <- terra::values(r, mat = FALSE,
+  #                         na.rm = TRUE)
+  # message("    Loaded all valid values.")
   
   #_---------------
   
   # ── Cap filter: layers whose name contains ASIS or PEy ──────────────
-  cap_filter <- grepl("ASIS|PEy", layer_name, ignore.case = TRUE)
+  cap_filter <- grepl("ASIS", layer_name, ignore.case = TRUE)
   
   if (cap_filter) {
     values <- values[values <= 100] #Anything above 100 is removed.
